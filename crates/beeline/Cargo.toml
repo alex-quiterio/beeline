@@ -1,0 +1,12 @@
+[package]
+name = "beeline"
+description = "Autonomous drone simulation library: physics, bee-inspired navigation, frontier search, PX4 ULog flight logs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Headless on purpose: no graphics dependencies here
+[dependencies]
+glam.workspace = true
+rapier3d = "0.22"

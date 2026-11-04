@@ -88,11 +88,12 @@ Cities are generated from a seed, so every run and every bug is exactly reproduc
 
 ### Architecture
 
-Layered like real drone software. Dependencies only point downwards, and the autonomy code has **never heard of the simulator**:
+Layered like real drone software, in two crates. The **library** (`crates/beeline`) is the whole drone and its world, fully headless, with no graphics dependency at all. The **viewer** (`crates/viewer`) is a thin app on top. Inside the library, dependencies only point downwards, and the autonomy code has **never heard of the simulator**:
 
 ```
-  main · render (binary)          viewer: input, fixed 60 Hz loop + interpolated rendering, noir graphics
-          │
+crates/viewer   (binary: beeline)    input, fixed 60 Hz loop + interpolated rendering, noir graphics
+════════════════════════════════════════════════════════════════════════════════════════════════
+crates/beeline  (library)
   telemetry · fleet               flight recorder (PX4 ULog) · terrain rebuilt from other drones' logs
           │
   sim ─────────┐    nav           the world (Rapier, cities, beacon)  ·  autonomy (perception, mission, guidance)
@@ -102,16 +103,29 @@ Layered like real drone software. Dependencies only point downwards, and the aut
   sensors · vehicle               shared contracts: what can be sensed · what the airframe is
 ```
 
+```
+.
+├── Cargo.toml                 workspace
+├── crates/
+│   ├── beeline/               the library (+ tests/, examples/mission.rs)
+│   │   └── src/  lib.rs  vehicle.rs  sensors.rs  flight.rs  nav/  sim/  telemetry.rs  fleet.rs
+│   └── viewer/                the app
+│       └── src/  main.rs  render.rs
+└── docs/                      images
+```
+
 | Module | What it does |
 |---|---|
-| [`vehicle`](src/vehicle.rs) | Airframe constants, stick `Inputs`, estimated `State`. Physics and controller both depend on it, never on each other. |
-| [`sensors`](src/sensors.rs) | The `Sensors` trait (range rays, camera, payload hook). **The autopilot's only window onto the world.** |
-| [`flight`](src/flight.rs) | PX4-style cascade: setpoint rate limiter → PI velocity control + drag feedforward → tilt and throttle. The integral term doubles as a wind estimator. |
-| [`nav/mission`](src/nav/mission.rs) | **Where** to go. A pluggable `Mission` trait; `Retrieve` is the beacon hunt. |
-| [`nav`](src/nav/mod.rs) | **How** to get there: perception (mapping, beacon tracking) and the guidance stack. |
-| [`sim`](src/sim/mod.rs) | Fixed-step Rapier physics, procedural [cities](src/sim/city.rs), the [beacon](src/sim/beacon.rs). Implements `Sensors`. |
-| [`telemetry`](src/telemetry.rs) | The black box: writes standard PX4 ULog. |
-| [`fleet`](src/fleet.rs) | Reads ULogs back and rebuilds the terrain for the next drone. |
+| [`vehicle`](crates/beeline/src/vehicle.rs) | Airframe constants, stick `Inputs`, estimated `State`. Physics and controller both depend on it, never on each other. |
+| [`sensors`](crates/beeline/src/sensors.rs) | The `Sensors` trait (range rays, camera, payload hook). **The autopilot's only window onto the world.** |
+| [`flight`](crates/beeline/src/flight.rs) | PX4-style cascade: setpoint rate limiter → PI velocity control + drag feedforward → tilt and throttle. The integral term doubles as a wind estimator. |
+| [`nav/mission`](crates/beeline/src/nav/mission.rs) | **Where** to go. A pluggable `Mission` trait; `Retrieve` is the beacon hunt. |
+| [`nav`](crates/beeline/src/nav/mod.rs) | **How** to get there: perception (mapping, beacon tracking) and the guidance stack. |
+| [`sim`](crates/beeline/src/sim/mod.rs) | Fixed-step Rapier physics, procedural [cities](crates/beeline/src/sim/city.rs), the [beacon](crates/beeline/src/sim/beacon.rs). Implements `Sensors`. |
+| [`telemetry`](crates/beeline/src/telemetry.rs) | The black box: writes standard PX4 ULog. |
+| [`fleet`](crates/beeline/src/fleet.rs) | Reads ULogs back and rebuilds the terrain for the next drone. |
+
+The viewer ([`main.rs`](crates/viewer/src/main.rs), [`render.rs`](crates/viewer/src/render.rs)) only *reads* the library, so a different front end (a web view, a ROS bridge, a training harness) can replace it without touching the drone.
 
 **To add a scenario**, implement `Mission` (four methods: `phase`, `command`, `observe`, `objective`) and hand it to `Autopilot::with_mission`. Guidance, physics, logging and rendering don't change. **To fly the same autopilot somewhere else**, implement `Sensors`.
 
@@ -148,7 +162,7 @@ Honeybees don't measure distances. They measure **optic flow**, how fast the wor
 - **Balance the left and right flow**, and you fly down the middle of the corridor.
 - **Hold the total flow constant**, and you slow down automatically where it gets narrow.
 
-Beeline's drone uses those two rules with side-looking sensors ([`optic_flow.rs`](src/nav/optic_flow.rs)). It has no rule about street widths, yet it slows down in tight alleys and stays centred between buildings. The same idea flies real insect-sized robots (Franceschini's optic-flow regulator).
+Beeline's drone uses those two rules with side-looking sensors ([`optic_flow.rs`](crates/beeline/src/nav/optic_flow.rs)). It has no rule about street widths, yet it slows down in tight alleys and stays centred between buildings. The same idea flies real insect-sized robots (Franceschini's optic-flow regulator).
 
 ## Flight logs: a real drone's black box
 
@@ -179,7 +193,7 @@ ulog2csv logs/beeline_downtown_7_*.ulg        # every topic to CSV
 
 ### Fleet intel: learn from the drones before you
 
-Logs aren't just for humans. Before take-off, Beeline reads **every earlier flight log of the same city** and replays their `vehicle_local_position` + `obstacle_distance` through **log-odds occupancy mapping** ([`fleet.rs`](src/fleet.rs)). Walls get hit over and over, while moving gates and patrol drones are mostly seen *through*, so they fade out instead of becoming ghost walls. The new drone takes off with a map:
+Logs aren't just for humans. Before take-off, Beeline reads **every earlier flight log of the same city** and replays their `vehicle_local_position` + `obstacle_distance` through **log-odds occupancy mapping** ([`fleet.rs`](crates/beeline/src/fleet.rs)). Walls get hit over and over, while moving gates and patrol drones are mostly seen *through*, so they fade out instead of becoming ghost walls. The new drone takes off with a map:
 
 ```
   0:00  FLEET INTEL: 1 EARLIER FLIGHT(S), 30% OF THE CITY PRE-MAPPED.

@@ -40,8 +40,16 @@ name = "beeline"
 version = "0.1.0"
 dependencies = [
  "glam",
- "macroquad",
  "rapier3d",
+]
+
+[[package]]
+name = "beeline-viewer"
+version = "0.1.0"
+dependencies = [
+ "beeline",
+ "glam",
+ "macroquad",
 ]
 
 [[package]]

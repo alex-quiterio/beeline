@@ -1,11 +1,15 @@
-[package]
-name = "beeline"
+[workspace]
+resolver = "3"
+members = ["crates/beeline", "crates/viewer"]
+# `cargo run` starts the viewer; `cargo test` covers both crates
+default-members = ["crates/beeline", "crates/viewer"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Autonomous drone simulator: bee-inspired navigation, frontier exploration, PX4 ULog flight logs"
+repository = "https://github.com/alex-quiterio/beeline"
 
-[dependencies]
+[workspace.dependencies]
+# glam must match the version macroquad re-exports, so library and viewer share one Vec3 type
 glam = "0.27"
-macroquad = "0.4"
-rapier3d = "0.22"

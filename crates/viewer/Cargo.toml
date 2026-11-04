@@ -1,0 +1,16 @@
+[package]
+name = "beeline-viewer"
+description = "Noir 3D viewer and game loop for the Beeline drone simulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "beeline"
+path = "src/main.rs"
+
+[dependencies]
+beeline = { path = "../beeline" }
+glam.workspace = true
+macroquad = "0.4"

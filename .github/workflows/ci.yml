@@ -28,10 +28,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --workspace --all-targets -- -D warnings
 
       - name: Tests (unit + headless missions + flight-log round trip)
-        run: cargo test --release
+        run: cargo test --release --workspace
 
       - name: Retrieval benchmark (both maps, blind vs fleet intel)
-        run: cargo test --release -- --ignored --nocapture
+        run: cargo test --release --workspace -- --ignored --nocapture
