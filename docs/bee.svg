@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200" width="240" height="200" role="img" aria-label="Beeline's mascot: a cute bee with a drone's red nose light">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="55%" r="50%">
+      <stop offset="0%" stop-color="#a64dff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#a64dff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="body"><ellipse cx="128" cy="118" rx="62" ry="46"/></clipPath>
+  </defs>
+  <ellipse cx="120" cy="112" rx="112" ry="86" fill="url(#glow)"/>
+  <!-- dotted flight path -->
+  <path d="M8 170 C 40 150, 50 185, 72 160" fill="none" stroke="#bbb" stroke-width="3" stroke-dasharray="2 8" stroke-linecap="round"/>
+  <!-- wings -->
+  <ellipse cx="104" cy="66" rx="30" ry="40" transform="rotate(-25 104 66)" fill="#e8f1ff" fill-opacity="0.85" stroke="#222" stroke-width="4"/>
+  <ellipse cx="146" cy="62" rx="26" ry="36" transform="rotate(20 146 62)" fill="#e8f1ff" fill-opacity="0.85" stroke="#222" stroke-width="4"/>
+  <!-- stinger -->
+  <path d="M188 120 L 210 126 L 188 134 Z" fill="#222"/>
+  <!-- body with stripes -->
+  <ellipse cx="128" cy="118" rx="62" ry="46" fill="#ffc531"/>
+  <g clip-path="url(#body)" fill="#222">
+    <rect x="118" y="60" width="18" height="120" rx="4"/>
+    <rect x="152" y="60" width="16" height="120" rx="4"/>
+    <rect x="182" y="60" width="16" height="120" rx="4"/>
+  </g>
+  <ellipse cx="128" cy="118" rx="62" ry="46" fill="none" stroke="#222" stroke-width="5"/>
+  <!-- head -->
+  <circle cx="74" cy="114" r="36" fill="#ffc531" stroke="#222" stroke-width="5"/>
+  <!-- antennae -->
+  <path d="M62 82 Q 50 54 36 50" fill="none" stroke="#222" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 80 Q 86 52 74 40" fill="none" stroke="#222" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="36" cy="50" r="6" fill="#d11414"/>
+  <circle cx="74" cy="40" r="6" fill="#a64dff"/>
+  <!-- face -->
+  <circle cx="62" cy="110" r="8" fill="#222"/>
+  <circle cx="86" cy="110" r="8" fill="#222"/>
+  <circle cx="64" cy="107" r="3" fill="#fff"/>
+  <circle cx="88" cy="107" r="3" fill="#fff"/>
+  <ellipse cx="54" cy="124" rx="7" ry="4" fill="#ff8fa3" opacity="0.8"/>
+  <ellipse cx="96" cy="124" rx="7" ry="4" fill="#ff8fa3" opacity="0.8"/>
+  <path d="M66 126 Q 74 134 82 126" fill="none" stroke="#222" stroke-width="4" stroke-linecap="round"/>
+  <!-- tiny purple beacon, carried home -->
+  <line x1="128" y1="164" x2="128" y2="178" stroke="#bbb" stroke-width="2"/>
+  <circle cx="128" cy="184" r="8" fill="#a64dff"/>
+  <circle cx="128" cy="184" r="13" fill="none" stroke="#a64dff" stroke-opacity="0.4" stroke-width="2"/>
+</svg>

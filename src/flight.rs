@@ -5,36 +5,14 @@
 //!   -> tilt angles / throttle -> sticks.
 //! The integral term learns steady disturbances such as wind, so the drone holds position in a breeze.
 
-use glam::{vec2, Vec3};
+use crate::vehicle::{DRAG, G, Inputs, MAX_TILT, MAX_YAW_RATE, State, THRUST_RANGE};
+use glam::{Vec3, vec2};
 
-pub const MAX_TILT: f32 = 0.55; // rad; stick = 1 means this much tilt
-pub const THRUST_RANGE: f32 = 0.7; // throttle = 1 adds 70% of hover thrust
-pub const MAX_YAW_RATE: f32 = 2.0; // rad/s at full yaw stick
-pub const DRAG: f32 = 0.35; // linear drag coefficient (1/s), shared with the simulator
-pub const G: f32 = 9.81;
-
-const KP: Vec3 = Vec3::new(2.2, 3.0, 2.2); // velocity P gains (x, y, z)
-const KI: Vec3 = Vec3::new(0.8, 1.0, 0.8); // velocity I gains
+pub const KP: Vec3 = Vec3::new(2.2, 3.0, 2.2); // velocity P gains (x, y, z)
+pub const KI: Vec3 = Vec3::new(0.8, 1.0, 0.8); // velocity I gains
 const I_LIMIT: f32 = 6.0; // integral clamp, prevents wind-up
 const KP_YAW: f32 = 3.0;
-const SETPOINT_ACCEL: f32 = 6.0; // max rate of change of the velocity setpoint (m/s²)
-
-/// Stick inputs, each in [-1, 1].
-#[derive(Default, Clone, Copy, Debug)]
-pub struct Inputs {
-    pub throttle: f32,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub roll: f32,
-}
-
-/// What the autopilot knows about the drone (an "estimator" output in a real stack).
-#[derive(Clone, Copy, Debug)]
-pub struct State {
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub yaw: f32,
-}
+pub const SETPOINT_ACCEL: f32 = 6.0; // max rate of change of the velocity setpoint (m/s²)
 
 #[derive(Clone, Copy, Debug)]
 pub enum YawCmd {

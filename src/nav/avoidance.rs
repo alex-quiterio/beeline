@@ -1,8 +1,8 @@
 //! Reactive collision avoidance from a 3D ring of range sensors (a simple spinning lidar).
 //!
-//! * Collision prevention (as in PX4): remove the part of the commanded velocity that points at a
-//!   nearby obstacle, more strongly the closer it is. The drone slides along walls instead of
-//!   bouncing off them, and never accelerates into something it can see.
+//! * Collision prevention (as in PX4): limit the commanded speed toward each obstacle to what the
+//!   drone can still brake from before reaching it. The drone slides along walls instead of
+//!   bouncing off them, and never flies at something faster than it can stop.
 //! * Time-to-collision: for moving obstacles on a collision course, sidestep perpendicular to their
 //!   motion (or hold back, for things moving vertically), with urgency growing as impact nears.
 
@@ -15,6 +15,7 @@ pub const ELEVATIONS: [f32; 3] = [-0.35, 0.0, 0.35]; // rings at -20°, 0°, +20
 pub const SENSOR_RANGE: f32 = 15.0;
 pub const SLOW_R: f32 = 5.0; // start removing velocity toward an obstacle at this distance
 const STOP_R: f32 = 1.5; // fully stop approaching (and back off) inside this distance
+const BRAKE_ACC: f32 = 2.5; // deceleration assumed when limiting approach speed (m/s²), with margin
 const TTC_HORIZON: f32 = 3.0; // react to moving obstacles that would hit within this many seconds
 
 /// One sensor reading of the level ring, kept for debug drawing.
@@ -57,7 +58,9 @@ pub fn avoid(sensors: &impl Sensors, pos: Vec3, drone_vel: Vec3, mut v: Vec3) ->
 
     // Pass 1: moving obstacles on a collision course (3D closing speed) -> sidestep / hold back
     for (flat, dir, _, h) in &hits {
-        if h.vel.length() < 0.5 { continue; }
+        if h.vel.length() < 0.5 {
+            continue;
+        }
         let closing = (drone_vel - h.vel).dot(*dir);
         let ttc = if closing > 0.1 { h.dist / closing } else { f32::INFINITY };
         if ttc < TTC_HORIZON {
@@ -71,14 +74,15 @@ pub fn avoid(sensors: &impl Sensors, pos: Vec3, drone_vel: Vec3, mut v: Vec3) ->
         }
     }
 
-    // Pass 2 (safety filter): remove velocity toward anything close, relative to its own motion
+    // Pass 2 (safety filter, as PX4 Collision Prevention): never approach anything faster than
+    // you could still stop before it, v_max = sqrt(2 a (d - d_stop)), relative to its own motion
     let mut back_off = Vec3::ZERO;
     for (flat, _, flat_dist, h) in &hits {
         let closing = (v - h.vel).dot(*flat);
-        if closing > 0.0 && *flat_dist < SLOW_R {
-            let w = ((SLOW_R - flat_dist) / (SLOW_R - STOP_R)).clamp(0.0, 1.0);
-            v -= *flat * closing * w;
-            out.active |= w > 0.3;
+        let allowed = (2.0 * BRAKE_ACC * (flat_dist - STOP_R).max(0.0)).sqrt();
+        if closing > allowed {
+            v -= *flat * (closing - allowed);
+            out.active |= closing - allowed > 0.5;
         }
         if *flat_dist < STOP_R {
             back_off -= *flat * (STOP_R - flat_dist); // too close: back off

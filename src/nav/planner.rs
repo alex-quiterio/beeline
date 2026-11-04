@@ -1,43 +1,166 @@
-//! Global path planner: A* over a 2D occupancy grid of the city, then string-pulling
-//! to turn the jagged grid path into a few straight segments.
+//! The drone's map and its path planner.
+//!
+//! The map is a 2D occupancy grid with a *knowledge* layer: every cell starts **unknown** and is
+//! learned from the lidar as the drone flies (see `mapping.rs`). Walls are inflated by a safety
+//! margin. A* treats unknown cells as free ("optimistic planning") and the route is replanned as
+//! the map fills in. String pulling turns the jagged grid path into a few straight segments.
 
-use glam::{vec2, Vec2};
+use glam::{Vec2, vec2};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-type Cell = (i32, i32);
+pub type Cell = (i32, i32);
 const NEIGHBOURS: [Cell; 8] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+const SIDES: [Cell; 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CellState {
+    Unknown,
+    Free,
+    /// Within the safety margin of a wall
+    Margin,
+    Wall,
+}
 
 pub struct Grid {
     origin: Vec2,
     cell: f32,
     size: i32,
-    blocked: Vec<bool>,
+    known: Vec<bool>,
+    blocked: Vec<bool>, // wall or margin
+    wall: Vec<bool>,
+    known_count: usize,
 }
 
 impl Grid {
+    /// A grid where everything is still unknown.
     pub fn new(half_extent: f32, cell: f32) -> Self {
         let size = (half_extent * 2.0 / cell).ceil() as i32;
-        Self { origin: Vec2::splat(-half_extent), cell, size, blocked: vec![false; (size * size) as usize] }
+        let n = (size * size) as usize;
+        Self {
+            origin: Vec2::splat(-half_extent),
+            cell,
+            size,
+            known: vec![false; n],
+            blocked: vec![false; n],
+            wall: vec![false; n],
+            known_count: 0,
+        }
     }
 
-    /// Build a grid from rectangular footprints `(centre, half_size)`, each grown by `inflate`.
+    /// A fully known grid from rectangular footprints `(centre, half_size)`, each grown by `inflate`.
     pub fn from_footprints(half_extent: f32, cell: f32, footprints: &[(Vec2, Vec2)], inflate: f32) -> Self {
         let mut grid = Self::new(half_extent, cell);
+        grid.known.fill(true);
+        grid.known_count = grid.known.len();
         for &(c, h) in footprints {
             grid.block_rect(c, h, inflate);
         }
         grid
     }
 
-    /// Mark a rectangle as blocked, grown by `inflate` so paths keep a safety margin.
+    /// Mark a rectangle as wall, grown by an `inflate` margin.
     pub fn block_rect(&mut self, center: Vec2, half: Vec2, inflate: f32) {
         let (a, b) = (self.cell_of(center - half - inflate), self.cell_of(center + half + inflate));
-        for y in a.1.max(0)..=b.1.min(self.size - 1) {
-            for x in a.0.max(0)..=b.0.min(self.size - 1) {
-                self.blocked[(y * self.size + x) as usize] = true;
+        for y in a.1..=b.1 {
+            for x in a.0..=b.0 {
+                if let Some(i) = self.index((x, y)) {
+                    self.blocked[i] = true;
+                    self.learn(i);
+                }
             }
         }
+    }
+
+    /// The straight line from `a` to `b` (excluding its end) has been seen to be empty.
+    pub fn mark_seen(&mut self, a: Vec2, b: Vec2) {
+        let steps = ((b - a).length() / (self.cell * 0.5)) as i32;
+        for s in 0..steps {
+            if let Some(i) = self.index(self.cell_of(a.lerp(b, s as f32 / steps as f32))) {
+                self.learn(i);
+            }
+        }
+    }
+
+    /// This cell has been observed (e.g. by another drone).
+    pub fn mark_known(&mut self, c: Cell) {
+        if let Some(i) = self.index(c) {
+            self.learn(i);
+        }
+    }
+
+    /// A wall was seen at `p`: block it and every cell within `inflate` of it.
+    pub fn mark_wall(&mut self, p: Vec2, inflate: f32) {
+        let c = self.cell_of(p);
+        let Some(i) = self.index(c) else { return };
+        if self.wall[i] {
+            return;
+        }
+        self.wall[i] = true;
+        let r = (inflate / self.cell).ceil() as i32;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if ((dx * dx + dy * dy) as f32).sqrt() * self.cell <= inflate + 1e-3
+                    && let Some(j) = self.index((c.0 + dx, c.1 + dy))
+                {
+                    self.blocked[j] = true;
+                    self.learn(j);
+                }
+            }
+        }
+    }
+
+    pub fn state(&self, c: Cell) -> CellState {
+        match self.index(c) {
+            None => CellState::Unknown,
+            Some(i) if self.wall[i] => CellState::Wall,
+            Some(i) if self.blocked[i] => CellState::Margin,
+            Some(i) if self.known[i] => CellState::Free,
+            Some(_) => CellState::Unknown,
+        }
+    }
+
+    pub fn size(&self) -> i32 {
+        self.size
+    }
+
+    /// Fraction of the map that has been seen.
+    pub fn explored(&self) -> f32 {
+        self.known_count as f32 / self.known.len() as f32
+    }
+
+    /// Map a world position to 0..1 across the grid (for drawing a minimap).
+    pub fn to_unit(&self, p: Vec2) -> Vec2 {
+        (p - self.origin) / (self.cell * self.size as f32)
+    }
+
+    /// A frontier cell is known, free, and touches the unknown: the edge of what has been explored.
+    pub fn is_frontier(&self, c: Cell) -> bool {
+        self.is_free(c)
+            && self.is_known(c)
+            && SIDES.iter().any(|d| self.index((c.0 + d.0, c.1 + d.1)).is_some_and(|j| !self.known[j]))
+    }
+
+    pub fn is_frontier_at(&self, p: Vec2) -> bool {
+        self.is_frontier(self.cell_of(p))
+    }
+
+    pub fn is_known(&self, c: Cell) -> bool {
+        self.index(c).is_some_and(|i| self.known[i])
+    }
+
+    /// Not blocked (unknown cells count as free) and inside the map.
+    pub fn is_free(&self, c: Cell) -> bool {
+        self.index(c).is_some_and(|i| !self.blocked[i])
+    }
+
+    pub fn cell_of(&self, p: Vec2) -> Cell {
+        let c = ((p - self.origin) / self.cell).floor();
+        (c.x as i32, c.y as i32)
+    }
+
+    pub fn center_of(&self, c: Cell) -> Vec2 {
+        self.origin + (vec2(c.0 as f32, c.1 as f32) + 0.5) * self.cell
     }
 
     pub fn line_of_sight(&self, a: Vec2, b: Vec2) -> bool {
@@ -45,7 +168,7 @@ impl Grid {
         (0..=steps).all(|i| self.is_free(self.cell_of(a.lerp(b, i as f32 / steps as f32))))
     }
 
-    /// Shortest collision-free path from `start` to `goal`, as a list of corner points.
+    /// Shortest path from `start` to `goal` through cells not known to be blocked.
     pub fn find_path(&self, start: Vec2, goal: Vec2) -> Option<Vec<Vec2>> {
         let s = self.nearest_free(self.cell_of(start))?;
         let g = self.nearest_free(self.cell_of(goal))?;
@@ -64,12 +187,17 @@ impl Grid {
 
         while let Some(Reverse((f, i))) = open.pop() {
             let c = cell_at(i);
-            if c == g { break; }
-            if f - h(c) > cost[i] { continue; } // stale queue entry
+            if c == g {
+                break;
+            }
+            if f - h(c) > cost[i] {
+                continue;
+            } // stale queue entry
             for (dx, dy) in NEIGHBOURS {
                 let nb = (c.0 + dx, c.1 + dy);
                 let diagonal = dx != 0 && dy != 0;
-                if !self.is_free(nb) || (diagonal && !(self.is_free((c.0 + dx, c.1)) && self.is_free((c.0, c.1 + dy)))) {
+                if !self.is_free(nb) || (diagonal && !(self.is_free((c.0 + dx, c.1)) && self.is_free((c.0, c.1 + dy))))
+                {
                     continue; // blocked, or a diagonal that would cut a corner
                 }
                 let (j, new_cost) = (idx(nb), cost[i] + if diagonal { 14 } else { 10 });
@@ -80,7 +208,9 @@ impl Grid {
                 }
             }
         }
-        if cost[idx(g)] == u32::MAX { return None; }
+        if cost[idx(g)] == u32::MAX {
+            return None;
+        }
 
         let mut cells = vec![];
         let mut i = idx(g);
@@ -96,7 +226,9 @@ impl Grid {
         while i < cells.len() {
             let cur = *path.last().unwrap();
             let mut j = cells.len() - 1;
-            while j > i && !self.line_of_sight(cur, cells[j]) { j -= 1; }
+            while j > i && !self.line_of_sight(cur, cells[j]) {
+                j -= 1;
+            }
             path.push(cells[j]);
             i = j + 1;
         }
@@ -104,23 +236,22 @@ impl Grid {
         Some(path)
     }
 
-    fn cell_of(&self, p: Vec2) -> Cell {
-        let c = ((p - self.origin) / self.cell).floor();
-        (c.x as i32, c.y as i32)
+    fn index(&self, c: Cell) -> Option<usize> {
+        (c.0 >= 0 && c.1 >= 0 && c.0 < self.size && c.1 < self.size).then(|| (c.1 * self.size + c.0) as usize)
     }
 
-    fn center_of(&self, c: Cell) -> Vec2 {
-        self.origin + (vec2(c.0 as f32, c.1 as f32) + 0.5) * self.cell
-    }
-
-    fn is_free(&self, c: Cell) -> bool {
-        c.0 >= 0 && c.1 >= 0 && c.0 < self.size && c.1 < self.size && !self.blocked[(c.1 * self.size + c.0) as usize]
+    fn learn(&mut self, i: usize) {
+        if !self.known[i] {
+            self.known[i] = true;
+            self.known_count += 1;
+        }
     }
 
     /// The closest free cell (searching outward in square rings), for when we start inside a margin.
     fn nearest_free(&self, c: Cell) -> Option<Cell> {
         (0..15).find_map(|r: i32| {
-            (-r..=r).flat_map(|dy| (-r..=r).map(move |dx| (dx, dy)))
+            (-r..=r)
+                .flat_map(|dy| (-r..=r).map(move |dx| (dx, dy)))
                 .filter(|(dx, dy)| dx.abs().max(dy.abs()) == r)
                 .map(|(dx, dy)| (c.0 + dx, c.1 + dy))
                 .find(|&n| self.is_free(n))
@@ -147,10 +278,26 @@ mod tests {
     #[test]
     fn no_path_when_enclosed() {
         let mut grid = Grid::new(10.0, 1.0);
-        for (c, h) in [(vec2(0.0, 5.0), vec2(6.0, 1.0)), (vec2(0.0, -5.0), vec2(6.0, 1.0)),
-                       (vec2(5.0, 0.0), vec2(1.0, 6.0)), (vec2(-5.0, 0.0), vec2(1.0, 6.0))] {
+        for (c, h) in [
+            (vec2(0.0, 5.0), vec2(6.0, 1.0)),
+            (vec2(0.0, -5.0), vec2(6.0, 1.0)),
+            (vec2(5.0, 0.0), vec2(1.0, 6.0)),
+            (vec2(-5.0, 0.0), vec2(1.0, 6.0)),
+        ] {
             grid.block_rect(c, h, 0.0);
         }
         assert!(grid.find_path(vec2(0.0, 0.0), vec2(8.5, 8.5)).is_none());
+    }
+
+    #[test]
+    fn learning_walls_and_frontiers() {
+        let mut grid = Grid::new(10.0, 1.0);
+        assert_eq!(grid.explored(), 0.0);
+        grid.mark_seen(vec2(0.0, 0.0), vec2(5.0, 0.0));
+        grid.mark_wall(vec2(5.2, 0.0), 1.0);
+        assert_eq!(grid.state(grid.cell_of(vec2(5.2, 0.0))), CellState::Wall);
+        assert_eq!(grid.state(grid.cell_of(vec2(1.0, 0.0))), CellState::Free);
+        assert!(grid.is_frontier_at(vec2(1.0, 0.0)), "seen cells next to unseen ones are frontier");
+        assert!(grid.explored() > 0.0);
     }
 }
